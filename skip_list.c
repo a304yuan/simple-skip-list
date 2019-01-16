@@ -43,33 +43,45 @@ skiplist *skiplist_new_from_array(void * arr, size_t n, size_t elem_size, double
 	return list;
 }
 */
-skiplist * skiplist_new_from_array(void * arr, size_t n, size_t elem_size, double prob, skiplist_compare cmp) {
+
+static skiplist_node * skiplist_new_node(const void * key, size_t len, int levels) {
+    skiplist_node * node = malloc(sizeof(skiplist_node) + sizeof(skiplist_node*) * levels);
+    node->key = malloc(len);
+    memcpy(node->key, key, len);
+    memset(node->next, 0, sizeof(skiplist_node*) * levels);
+    return node;
+}
+
+static void skiplist_free_node(skiplist_node * node) {
+    if (node->key) free(node->key);
+    free(node);
+}
+
+skiplist * skiplist_new_from_array(const void * arr, size_t n, size_t elem_size, double prob, skiplist_compare cmp) {
 	skiplist * list = malloc(sizeof(skiplist));
 	if (list == NULL) return list;
 
 	list->size = n;
+    list->elem_size = elem_size;
 	list->levels = - log(n) / log(prob) + 1;
 	list->prob = prob;
 	list->head = malloc(sizeof(skiplist_node) + sizeof(skiplist_node*) * list->levels);
 	list->head->key = NULL;
 	list->cmp = cmp;
 
-	//Form level 0
-	skiplist_node *last_node = list->head;
-	skiplist_node *cur_node;
-	for(size_t i = 0; i < n; i++) {
-		cur_node = malloc(sizeof(skiplist_node) + sizeof(skiplist_node *) * list->levels);
-		cur_node->data = malloc(elem_size);
-		cur_node->key = cur_node->data;
-		memcpy(cur_node->key, (char*)a + elem_size * i, elem_size);
+	// Form level 0
+	skiplist_node * last_node = list->head;
+	skiplist_node * cur_node;
+	for (size_t i = 0; i < n; i++) {
+		cur_node = skiplist_new_node(arr + elem_size * i, elem_size, list->levels);
 		last_node->next[0] = cur_node;
 		last_node = cur_node;
 	}
 	last_node->next[0] = NULL;
 
-	//Form higher levels
+	// Form higher levels
 	int count;
-	for(int i = 1; i < list->levels; i++) {
+	for (int i = 1; i < list->levels; i++) {
 		last_node = list->head;
 		cur_node = list->head->next[i-1];
 		count = 1;
@@ -90,20 +102,20 @@ skiplist * skiplist_new_from_array(void * arr, size_t n, size_t elem_size, doubl
 	return list;
 }
 
-static skiplist_node * skiplist_new_node(const void * key, size_t len, int levels) {
-    skiplist_node * node = malloc(sizeof(skiplist_node) + sizeof(skiplist_node*) * levels);
-    node->key = malloc(len);
-    memcpy(node->key, key, len);
-    return node;
-}
-
 skiplist * skiplist_new(size_t elem_size, int max_levels, double prob, skiplist_compare cmp) {
+    skiplist * list = malloc(sizeof(skiplist));
+    list->size = 0;
+    list->elem_size = elem_size;
+    list->levels = max_levels;
+    list->prob = prob;
+    list->cmp = cmp;
+    // init start null node
+    skiplist_node * node = malloc(sizeof(skiplist_node) + sizeof(skiplist_node*) * max_levels);
+    node->key = NULL;
+    memset(node->next, 0, sizeof(skiplist_node*) * max_levels);
+    list->head = node;
 
-}
-
-static void skiplist_free_node(skiplist_node * node) {
-    if (node->key) free(node->key);
-    free(node);
+    return list;
 }
 
 void skiplist_free(skiplist * list) {
@@ -117,11 +129,11 @@ void skiplist_free(skiplist * list) {
     free(list);
 }
 
-size_t skiplist_size(skiplist * list) {
+size_t skiplist_size(const skiplist * list) {
     return list->size;
 }
 
-static skiplist_node * skiplist_find_node(skiplist * list, void * key) {
+static skiplist_node * skiplist_find_node(const skiplist * list, const void * key) {
 	int lvl = list->levels - 1;
 	skiplist_node * cur_node = list->head;
 	while (lvl >= 0 && cur_node) {
@@ -132,47 +144,35 @@ static skiplist_node * skiplist_find_node(skiplist * list, void * key) {
 		else {
             lvl -= 1;
         }
-		if (cur_node != list->head)
-            if (list->cmp(key, cur_node->key) == 0) return cur_node;
+		if (cur_node != list->head && list->cmp(key, cur_node->key) == 0) {
+            return cur_node;
+        }
 	}
 
 	return NULL;
 }
 
-bool skiplist_exist(skiplist *list, void *key) {
+bool skiplist_exist(const skiplist *list, const void *key) {
     return skiplist_find_node(list, key) ? true : false;
 }
 
-void skiplist_insert(skiplist * list, void * key) {
+void skiplist_insert(skiplist * list, const void * key) {
 	skiplist_node * update[list->levels];
-	int p = 0;
 	skiplist_node * cur_node = list->head;
-	skiplist_node * new_node = malloc(sizeof(skiplist_node) + list->levels * sizeof(skiplist_node*));
-	new_node->data = malloc(key_size + val_size);
-	if (key_size == 0)
-        new_node->key = key;
-	else {
-        new_node->key = new_node->data;
-        memcpy(new_node->key, key, key_size);
-	}
-
-	if (val_size == 0)
-        new_node->value = value;
-    else {
-        new_node->value = (char*)new_node->data + key_size;
-        memcpy(new_node->value, value, val_size);
-    }
-
+	skiplist_node * new_node = skiplist_new_node(key, list->elem_size, list->levels);
+    int p = 0;
 	int lvl = list->levels - 1;
-	while(lvl >= 0 && cur_node) {
-		if (cur_node->next[lvl] && list->cmp_key(key, cur_node->next[lvl]->key) >= 0)
-			cur_node = cur_node->next[lvl];
+
+    while (lvl >= 0 && cur_node) {
+		if (cur_node->next[lvl] && list->cmp(key, cur_node->next[lvl]->key) >= 0) {
+            cur_node = cur_node->next[lvl];
+        }
 		else {
 			lvl--;
 			update[p++] = cur_node;
 		}
 	}
-
+    // randomly promote node
 	lvl = 0;
 	srand((unsigned)time(NULL));
 	do {
@@ -181,35 +181,36 @@ void skiplist_insert(skiplist * list, void * key) {
 		cur_node->next[lvl] = new_node;
 		lvl++;
 	}
-	while(lvl < list->levels && rand() % 100 / 100.0 <= list->prob);
-
+	while (lvl < list->levels && rand() % 100 / 100.0 <= list->prob);
 	list->size++;
 }
 
-void skiplist_delete(skiplist *list, void *key) {
-	skiplist_node *update[list->levels];
+void skiplist_delete(skiplist *list, const void *key) {
+	skiplist_node * update[list->levels];
+    skiplist_node * cur_node = list->head;
 	int p = 0;
 	int lvl = list->levels - 1;
-	skiplist_node *cur_node = list->head;
 
-	while(lvl >= 0 && cur_node) {
-		if (cur_node->next[lvl] && list->cmp_key(key, cur_node->next[lvl]->key) > 0)
-			cur_node = cur_node->next[lvl];
-		else if (cur_node->next[lvl] && list->cmp_key(key, cur_node->next[lvl]->key) == 0) {
+	while (lvl >= 0 && cur_node) {
+		if (cur_node->next[lvl] && list->cmp(key, cur_node->next[lvl]->key) > 0) {
+            cur_node = cur_node->next[lvl];
+        }
+		else if (cur_node->next[lvl] && list->cmp(key, cur_node->next[lvl]->key) == 0) {
 			lvl--;
 			update[p++] = cur_node;
 		}
-		else lvl--;
+		else {
+            lvl--;
+        }
 	}
 
 	lvl = 0;
-	skiplist_node *del_node = update[p-1]->next[0];
-	while(p) {
+	skiplist_node * del_node = update[p-1]->next[0];
+	while (p) {
 		cur_node = update[--p];
 		cur_node->next[lvl] = cur_node->next[lvl]->next[lvl];
 		lvl++;
 	}
-
 	skiplist_free_node(del_node);
 	list->size--;
 }
