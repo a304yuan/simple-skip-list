@@ -61,6 +61,7 @@ skiplist * skiplist_new_from_array(const void * arr, size_t n, size_t elem_size,
 	skiplist * list = malloc(sizeof(skiplist));
 	if (list == NULL) return list;
 
+    list->seed = (unsigned)time(NULL);
 	list->size = n;
     list->elem_size = elem_size;
 	list->levels = - log(n) / log(prob) + 1;
@@ -85,7 +86,7 @@ skiplist * skiplist_new_from_array(const void * arr, size_t n, size_t elem_size,
 		last_node = list->head;
 		cur_node = list->head->next[i-1];
 		count = 1;
-		while (cur_node != NULL) {
+		while (cur_node) {
 			if (count == (int)(1 / prob)) {
 				last_node->next[i] = cur_node;
 				last_node = cur_node;
@@ -104,6 +105,7 @@ skiplist * skiplist_new_from_array(const void * arr, size_t n, size_t elem_size,
 
 skiplist * skiplist_new(size_t elem_size, int max_levels, double prob, skiplist_compare cmp) {
     skiplist * list = malloc(sizeof(skiplist));
+    list->seed = (unsigned)time(NULL);
     list->size = 0;
     list->elem_size = elem_size;
     list->levels = max_levels;
@@ -111,8 +113,7 @@ skiplist * skiplist_new(size_t elem_size, int max_levels, double prob, skiplist_
     list->cmp = cmp;
     // init start null node
     skiplist_node * node = malloc(sizeof(skiplist_node) + sizeof(skiplist_node*) * max_levels);
-    node->key = NULL;
-    memset(node->next, 0, sizeof(skiplist_node*) * max_levels);
+    memset(node, 0, sizeof(skiplist_node));
     list->head = node;
 
     return list;
@@ -160,7 +161,6 @@ void skiplist_insert(skiplist * list, const void * key) {
 	skiplist_node * update[list->levels];
 	skiplist_node * cur_node = list->head;
 	skiplist_node * new_node = skiplist_new_node(key, list->elem_size, list->levels);
-    int p = 0;
 	int lvl = list->levels - 1;
 
     while (lvl >= 0 && cur_node) {
@@ -168,48 +168,47 @@ void skiplist_insert(skiplist * list, const void * key) {
             cur_node = cur_node->next[lvl];
         }
 		else {
-			lvl--;
-			update[p++] = cur_node;
+			update[lvl--] = cur_node;
 		}
 	}
     // randomly promote node
-	lvl = 0;
-	srand((unsigned)time(NULL));
+    lvl = 0;
 	do {
-		cur_node = update[--p];
+		cur_node = update[lvl];
 		new_node->next[lvl] = cur_node->next[lvl];
 		cur_node->next[lvl] = new_node;
-		lvl++;
+        lvl++;
 	}
-	while (lvl < list->levels && rand() % 100 / 100.0 <= list->prob);
+	while (lvl < list->levels && rand_r(&list->seed) % 100 / 100.0 <= list->prob);
 	list->size++;
 }
 
 void skiplist_delete(skiplist *list, const void *key) {
 	skiplist_node * update[list->levels];
     skiplist_node * cur_node = list->head;
-	int p = 0;
 	int lvl = list->levels - 1;
+    int count = 0;
 
 	while (lvl >= 0 && cur_node) {
-		if (cur_node->next[lvl] && list->cmp(key, cur_node->next[lvl]->key) > 0) {
+        int cmp = list->cmp(key, cur_node->next[lvl]->key);
+		if (cur_node->next[lvl] && cmp > 0) {
             cur_node = cur_node->next[lvl];
         }
-		else if (cur_node->next[lvl] && list->cmp(key, cur_node->next[lvl]->key) == 0) {
-			lvl--;
-			update[p++] = cur_node;
+		else if (cur_node->next[lvl] && cmp == 0) {
+			update[lvl--] = cur_node;
+            count++;
 		}
 		else {
             lvl--;
         }
 	}
 
-	lvl = 0;
-	skiplist_node * del_node = update[p-1]->next[0];
-	while (p) {
-		cur_node = update[--p];
-		cur_node->next[lvl] = cur_node->next[lvl]->next[lvl];
-		lvl++;
+    lvl = count - 1;
+	skiplist_node * del_node = update[0]->next[0];
+	while (lvl >= 0) {
+		cur_node = update[lvl];
+		cur_node->next[lvl] = del_node->next[lvl];
+		lvl--;
 	}
 	skiplist_free_node(del_node);
 	list->size--;
